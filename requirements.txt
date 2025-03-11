@@ -1,0 +1,11 @@
+# version requirements are for best reproducability, remove if needed
+# make sure to install the respective versions with cuda if using GPUs
+pandas
+Pillow
+scikit-learn
+seaborn
+tensorboard
+tqdm
+torch==2.1.0
+torchaudio==2.3.0
+torchvision==0.16.0

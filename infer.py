@@ -50,9 +50,10 @@ def load_dataset(
 def load_model(backbone, weight_path):
     model = SiameseResnet(backbone=backbone)
     weights = torch.load(weight_path)
-    model.load_state_dict(weights)
     model.add_hook()
     model.to(device)
+    model = nn.DataParallel(model)
+    model.load_state_dict(weights)
     model.eval()
     return model
 
@@ -124,7 +125,7 @@ def save(
         )
 
 
-def infer1(
+def infer(
     dataloader: DataLoader,
     model: nn.Sequential,
     loss_fn,
@@ -188,10 +189,10 @@ def infer1(
                         save(save_image_dir, sid_left, sid_right, left, right, "fp", i)
 
             pred = torch.max(embedding_left + embedding_right, dim=1)[1]
-            bz, nc, h, w = model.features.shape
-            before_dot = model.features.reshape((bz, nc, h * w))
+            bz, nc, h, w = model.module.features.shape
+            before_dot = model.module.features.reshape((bz, nc, h * w))
             cams_ = []
-            params = list(model.fc.parameters())[0]
+            params = list(model.module.fc.parameters())[0]
             for ids, bd in enumerate(before_dot):
                 weight = params[pred[ids]]
                 cam = torch.matmul(weight, bd)
@@ -373,7 +374,7 @@ if __name__ == "__main__":
         save_image_dir = "1fc-mask"
     if args.mask_inv:
         save_image_dir = "1fc-mask-inv"
-    infer_results = infer1(
+    infer_results = infer(
         infer_dataloader,
         model,
         ContrastiveLoss(),

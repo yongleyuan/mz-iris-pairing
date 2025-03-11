@@ -1,14 +1,18 @@
 import os
 import gc
+import copy
 import argparse
+import random
+import numpy as np
 from tqdm import tqdm
 from datetime import datetime
+
+from sklearn.model_selection import train_test_split
 
 import torch
 from torch import nn
 from torch.optim import Adam
-from torch.utils.data import DataLoader, random_split
-from torch.utils.data.dataloader import default_collate
+from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 from dataset import MZIrisDataset, MZIrisDatasetMask
@@ -21,6 +25,8 @@ def load_dataset(
     data_path: str,
     image_dir: str,
     batch_size: int,
+    train_split: float,
+    random_seed: int,
     mask: bool,
     mask_dir: str,
     mask_inverse: bool,
@@ -38,21 +44,21 @@ def load_dataset(
             data_path,
             image_dir,
         )
-    train_dataset, val_dataset = random_split(
-        dataset=dataset,
-        lengths=[args.train_split, 1 - args.train_split],
+    train_dataset, val_dataset = train_test_split(
+        dataset,
+        train_size=train_split,
+        shuffle=True,
+        random_state=random_seed,
     )
     train_dataloader = DataLoader(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
-        # collate_fn=lambda x: tuple(x_.to(device) for x_ in default_collate(x)),
     )
     val_dataloader = DataLoader(
         val_dataset,
         batch_size=batch_size,
         shuffle=True,
-        # collate_fn=lambda x: tuple(x_.to(device) for x_ in default_collate(x)),
     )
     return train_dataloader, val_dataloader
 
@@ -78,12 +84,12 @@ def write_results(
     avg_pd = pos_dist / (tp + fn)
     avg_nd = neg_dist / (tn + fp)
 
-    print(f"{event.upper()} Accuracy (%): {acc*100}")
-    print(f"{event.upper()} TPR (%): {tpr*100}")
-    print(f"{event.upper()} TNR (%): {tnr*100}")
-    print(f"{event.upper()} Precision (%): {p*100}")
-    print(f"{event.upper()} Recall (%): {r*100}")
-    print(f"{event.upper()} F1 score (%): {f1*100}")
+    print(f"{event.upper()} Accuracy (%): {acc * 100}")
+    print(f"{event.upper()} TPR (%): {tpr * 100}")
+    print(f"{event.upper()} TNR (%): {tnr * 100}")
+    print(f"{event.upper()} Precision (%): {p * 100}")
+    print(f"{event.upper()} Recall (%): {r * 100}")
+    print(f"{event.upper()} F1 score (%): {f1 * 100}")
     print(f"{event.upper()} average positive distance: {avg_pd}")
     print(f"{event.upper()} average negative distance: {avg_nd}")
     print(f"{event.upper()} batch average loss: {avg_loss}")
@@ -251,7 +257,12 @@ def parse_arguments():
         default="",
         help="Path to the initial weight",
     )
-    parser.add_argument("--data-path", "-d", required=True, help="Path to the dataset")
+    parser.add_argument(
+        "--data-path",
+        "-d",
+        required=True,
+        help="Path to the dataset",
+    )
     parser.add_argument(
         "--image-dir",
         "-i",
@@ -266,10 +277,18 @@ def parse_arguments():
         help="Train/val split ratio, defaults to 0.7",
     )
     parser.add_argument(
-        "--batch-size", "-bs", type=int, default=32, help="Batch size, defaults to 32"
+        "--batch-size",
+        "-bs",
+        type=int,
+        default=32,
+        help="Batch size, defaults to 32",
     )
     parser.add_argument(
-        "--epochs", "-e", type=int, default=20, help="Number of epochs, defaults to 20"
+        "--epochs",
+        "-e",
+        type=int,
+        default=20,
+        help="Number of epochs, defaults to 20",
     )
     parser.add_argument(
         "--lr",
@@ -286,7 +305,11 @@ def parse_arguments():
         help="Distance threshold, defaults to 0.5",
     )
     parser.add_argument(
-        "--suffix", "-s", type=str, default="", help="Suffix for output file/dir name"
+        "--suffix",
+        "-s",
+        type=str,
+        default="",
+        help="Suffix for output file/dir name",
     )
     parser.add_argument(
         "--mask",
@@ -295,10 +318,29 @@ def parse_arguments():
         help="Mask images - need to specify mask directory",
     )
     parser.add_argument(
-        "--mask-dir", "-md", type=str, default="", help="Path to the mask directory"
+        "--mask-dir",
+        "-md",
+        type=str,
+        default="",
+        help="Path to the mask directory",
     )
     parser.add_argument(
-        "--mask-inverse", "-mi", action="store_true", help="Mask inverse"
+        "--mask-inverse",
+        "-mi",
+        action="store_true",
+        help="Mask inverse",
+    )
+    parser.add_argument(
+        "--random-seed",
+        "-rs",
+        type=int,
+        default=-1,
+        help="Random seed, -1 means completely random",
+    )
+    parser.add_argument(
+        "--save-all-models",
+        action="store_true",
+        help="Save all models during training, defaults to saving the best model only",
     )
 
     return parser.parse_args()
@@ -325,6 +367,13 @@ def check_args(args):
         print("ERROR: Mask directory does not exist.")
         exit(1)
 
+    if args.random_seed != -1:
+        np.random.seed(args.random_seed)
+        random.seed(args.random_seed)
+        torch.manual_seed(args.random_seed)
+        torch.use_deterministic_algorithms(True)
+        torch.backends.cudnn.deterministic = True
+
 
 if __name__ == "__main__":
     timestamp = datetime.now().strftime("%m%d_%H%M%S")
@@ -340,6 +389,8 @@ if __name__ == "__main__":
         args.data_path,
         args.image_dir,
         args.batch_size,
+        args.train_split,
+        args.random_seed,
         args.mask,
         args.mask_dir,
         args.mask_inverse,
@@ -348,10 +399,12 @@ if __name__ == "__main__":
     print("Training and validation dataset loaded.")
 
     model = SiameseResnet(backbone=args.backbone)
+    model = nn.DataParallel(model)
     if args.init_weight_path:
         weights = torch.load(args.init_weight_path)
         model.load_state_dict(weights)
     model.to(device)
+    model = nn.DataParallelmodel(model)  # multi-gpu setup
     print("Model loaded.")
 
     checkpoint_dir = (
@@ -418,8 +471,6 @@ if __name__ == "__main__":
             train_results["pd"],
             train_results["tp"],
             train_results["loss"],
-            # train_results["y_true"],
-            # train_results["y_pred"],
         )
 
         # Validation
@@ -443,8 +494,6 @@ if __name__ == "__main__":
             val_results["pd"],
             val_results["tp"],
             val_results["loss"],
-            # val_results["y_true"],
-            # val_results["y_pred"],
         )
 
         # Save train vs validation loss
@@ -463,11 +512,22 @@ if __name__ == "__main__":
         checkpoint_name = f"epoch{epoch}"
         if val_results["loss"] < best_loss:
             checkpoint_name = checkpoint_name + "_best"
+            best_checkpoint_name = checkpoint_name
             best_loss = val_results["loss"]
-        checkpoint_path = os.path.join(checkpoint_dir, f"{checkpoint_name}.pt")
-        torch.save(model.state_dict(), checkpoint_path)
-        print("Checkpoint saved.")
+            best_model = copy.deepcopy(model.state_dict())
+        if args.save_all_models:
+            checkpoint_path = os.path.join(checkpoint_dir, f"{checkpoint_name}.pt")
+            torch.save(model.state_dict(), checkpoint_path)
+            print("Checkpoint saved.")
 
+        print()
+
+    if not args.save_all_models:
+        best_checkpoint_path = os.path.join(
+            checkpoint_dir, f"{best_checkpoint_name}.pt"
+        )
+        torch.save(best_model, best_checkpoint_path)
+        print("Best checkpoint saved.")
         print()
 
     writer.close()
