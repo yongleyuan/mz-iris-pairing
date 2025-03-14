@@ -1,6 +1,6 @@
 # Monozygotic Iris Pairing
 
-Implementation of the paper [A Siamese Network to Detect If Two Iris Images Are Monozygotic](https://arxiv.org/abs/2503.09749)
+Implementation of the paper `A Siamese Network to Detect If Two Iris Images Are Monozygotic`
 
 ## Data Preparation
 
@@ -10,7 +10,7 @@ Our dataset is separated into two parts, synthetic MZ/NMZ pairs and natural MZ/N
 
 #### Synthetic MZ/NMZ Pairs
 
-This part of the dataset will be available on [Notre Dame CVRL's lab website](https://cvrl.nd.edu/projects/data/).
+This part of the dataset will be available on `anonymized for now`.
 
 #### Natural MZ/NMZ Pairs
 
